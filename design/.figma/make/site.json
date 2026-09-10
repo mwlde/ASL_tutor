@@ -1,7 +1,15 @@
 {
-  "description": "Enables users to interact with American Sign Language through an accessible desktop app featuring intuitive buttons for seamless learning and communication.",
+  "title": "ASL Tutor",
+  "description": "Learn the American Sign Language fingerspelling alphabet — a webcam tutor that grades the shape of your hand and tells you which fingers are off.",
+  "language": "en",
   "robots": {
-    "index": false
+    "index": true
+  },
+  "icons": {
+    "icon": "/favicon.png"
+  },
+  "openGraph": {
+    "image": "/og.png"
   },
   "accessibility": {
     "addBypassLinks": false,

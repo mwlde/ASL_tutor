@@ -1,0 +1,15 @@
+# Cloudflare Pages response headers.
+# Hashed build assets are immutable; everything else revalidates so a redeploy
+# is picked up immediately.
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/*
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  # The camera is used by the page itself and by nobody it embeds. Once the
+  # browser port lands this is what lets it prompt for the webcam at all.
+  Permissions-Policy: camera=(self), microphone=(), geolocation=()

@@ -151,12 +151,15 @@ ASL_tutor/
 ├── requirements.txt
 ├── assets/fonts/               # vendored Nunito (SIL OFL) for the UI
 ├── design/                     # Figma Make wireframe app — the visual spec
+│   ├── public/                 # favicon, social card, Pages headers
+│   ├── wrangler.toml           # Cloudflare Pages project config
 │   └── src/imports/pasted_text/screen-specs.md   # the six screens, in prose
 ├── models/                     # hand_landmarker.task (downloaded, gitignored)
 ├── data/
 │   └── words.txt               # word list for spell-a-word mode
 ├── docs/
 │   ├── roadmap.md              # what's next, in build order
+│   ├── deploy.md               # Cloudflare Pages setup + browser-port checklist
 │   └── scoring.md              # two-signal design writeup (coming)
 ├── notebooks/                  # Sign-MNIST CNN experiments
 ├── src/
@@ -175,7 +178,8 @@ ASL_tutor/
 │   ├── train_asl.py            # train the skeleton CNN
 │   ├── verify_inference.py     # held-out accuracy check
 │   ├── build_reference_poses.py   # extract reference poses from real photos
-│   └── verify_reference_poses.py  # sanity-check the similarity metric
+│   ├── verify_reference_poses.py  # sanity-check the similarity metric
+│   └── make_web_icons.py          # placeholder favicon + social card
 └── results/
     ├── models/                 # best_model.h5, class_names.json, reference_poses.json
     ├── figures/                # confusion matrices, learning curves, reference grid
@@ -187,6 +191,13 @@ To open the design mock itself:
 ```bash
 cd design && pnpm install && pnpm dev
 ```
+
+It also builds to a static site and is set up to deploy to Cloudflare Pages as
+an interactive demo — see [docs/deploy.md](docs/deploy.md). The screens and the
+24 reference hand shapes are real; the confidence readings are sample values,
+since a static page has no camera or model behind it. The demo says so on every
+screen and has an About page explaining the project. The checklist for making
+it fully live is in that document.
 
 ## Roadmap
 

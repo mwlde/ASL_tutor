@@ -101,15 +101,10 @@ def _render_rail(ui, frame, active, height=None, mode=None):
     h = height if height is not None else frame.shape[0]
     ui.rect((0, 0, RAIL_WIDTH, h), t.INK)
 
-    # Logo mark: a yellow rounded tile holding a dark pin.
+    # Logo mark: a yellow rounded tile holding a dark graduation cap.
     lx, ly, size = (RAIL_WIDTH - 36) // 2, 20, 36
     ui.rect((lx, ly, size, size), t.YELLOW, radius=12)
-    cx, cy = lx + size / 2, ly + size / 2 - 2
-    ui.draw.ellipse((cx - 7, cy - 7, cx + 7, cy + 7), fill=t.rgba(t.INK, 1.0))
-    ui.draw.polygon([(cx - 5, cy + 4), (cx + 5, cy + 4), (cx, cy + 12)],
-                    fill=t.rgba(t.INK, 1.0))
-    ui.draw.ellipse((cx - 2.5, cy - 2.5, cx + 2.5, cy + 2.5),
-                    fill=t.rgba(t.YELLOW, 1.0))
+    t.mortarboard(ui, (lx, ly, size, size), t.INK)
 
     y = ly + size + 20
     for kind, _label, key in _NAV:

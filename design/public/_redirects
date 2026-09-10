@@ -1,0 +1,3 @@
+# Single page app: anything not matching a real file falls back to index.html.
+# 200 (rewrite) rather than 302 so the URL the visitor typed is preserved.
+/*  /index.html  200

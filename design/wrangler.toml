@@ -1,0 +1,11 @@
+# Cloudflare Pages project config.
+#
+# Deploy from this directory:
+#     npx wrangler pages deploy
+#
+# Or connect the repo in the Cloudflare dashboard and set the root directory to
+# `design` — see docs/deploy.md for the exact build settings.
+
+name = "asl-tutor"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-09-10"

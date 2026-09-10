@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-type Screen = "home" | "teach" | "practice" | "spell";
+type Screen = "home" | "teach" | "practice" | "spell" | "about";
 
 const LETTERS = "ABCDEFGHIKLMNOPQRSTUVWXY".split("");
 const SAMPLE_WORD = "HELLO";
@@ -29,14 +29,66 @@ const c = {
   terraFaint: "#FAE8DC",
 };
 
-function refImage(letter: string) {
-  if ("AEMS".includes(letter))
-    return "https://images.unsplash.com/photo-1573484092085-afd66f8cf2f3?w=480&h=300&fit=crop&auto=format";
-  if ("BDFIKLNPRUVWY".includes(letter))
-    return "https://images.unsplash.com/photo-1580892817659-0352a14eca90?w=480&h=300&fit=crop&auto=format";
-  if ("CGHOQX".includes(letter))
-    return "https://images.unsplash.com/photo-1580893211123-627e0262be3a?w=480&h=300&fit=crop&auto=format";
-  return "https://images.unsplash.com/photo-1580892762312-ee4c0d85d5d7?w=480&h=300&fit=crop&auto=format";
+// The 24 reference hand shapes the tutor scores against, exported from
+// results/models/reference_poses.json. Each is 21 landmarks, wrist-centred and
+// scale-normalised, so they can be drawn at any size.
+type Poses = Record<string, [number, number][]>;
+
+// MediaPipe's hand topology, matching src/skeleton.py. The palm is a chain
+// across the knuckles (5-9-13-17), not a fan of spokes from the wrist —
+// drawing it as a fan makes a closed fist read as an open hand.
+const BONES: [number, number][] = [
+  [0,1],[0,5],[5,9],[9,13],[13,17],[0,17],          // palm
+  [1,2],[2,3],[3,4],                                 // thumb
+  [5,6],[6,7],[7,8],                                 // index
+  [9,10],[10,11],[11,12],                            // middle
+  [13,14],[14,15],[15,16],                           // ring
+  [17,18],[18,19],[19,20],                           // pinky
+];
+
+function usePoses(): Poses | null {
+  const [poses, setPoses] = useState<Poses | null>(null);
+  useEffect(() => {
+    let live = true;
+    fetch("/data/reference_poses.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => live && setPoses(d))
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, []);
+  return poses;
+}
+
+/** Fit a normalised pose into a box and draw it. */
+function PoseArt({ pose, size = 132, stroke = c.ink }: {
+  pose: [number, number][]; size?: number; stroke?: string;
+}) {
+  const xs = pose.map((p) => p[0]);
+  const ys = pose.map((p) => p[1]);
+  const lo = [Math.min(...xs), Math.min(...ys)];
+  const hi = [Math.max(...xs), Math.max(...ys)];
+  const span = Math.max(hi[0] - lo[0], hi[1] - lo[1], 1e-6);
+  const usable = size * 0.86;
+  const mid = [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2];
+  const pt = (p: [number, number]) => [
+    ((p[0] - mid[0]) / span) * usable + size / 2,
+    ((p[1] - mid[1]) / span) * usable + size / 2,
+  ];
+  const px = pose.map(pt);
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {BONES.map(([a, b], i) => (
+        <line key={i} x1={px[a][0]} y1={px[a][1]} x2={px[b][0]} y2={px[b][1]}
+          stroke={stroke} strokeWidth="3" strokeLinecap="round" />
+      ))}
+      {px.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r="3.6" fill={stroke} />
+      ))}
+    </svg>
+  );
 }
 
 // ── decorative blob (organic shape from Yama) ─────────────────────────────────
@@ -59,11 +111,7 @@ function HandSkeleton({ colored }: { colored?: boolean }) {
     [cx+42,cy+18],[cx+46,cy-36],[cx+49,cy-86],[cx+51,cy-126],
     [cx+78,cy+28],[cx+88,cy-14],[cx+92,cy-54],[cx+94,cy-88],
   ];
-  const bones: [number,number][] = [
-    [0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],
-    [0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],
-    [0,17],[17,18],[18,19],[19,20],
-  ];
+  const bones = BONES;
   const dots = colored
     ? [c.mint,c.mint,c.mint,c.yellow,c.yellow,c.mint,c.mint,c.mint,c.mint,c.mint,c.mint,c.yellow,c.pink,c.mint,c.mint,c.yellow,c.pink,c.mint,c.mint,c.mint,c.mint]
     : Array(21).fill("rgba(180,140,110,0.25)");
@@ -82,17 +130,29 @@ function HandSkeleton({ colored }: { colored?: boolean }) {
   );
 }
 
-function CameraArea({ ghost }: { ghost?: string }) {
+function CameraArea({ ghost, poses, note }: {
+  ghost?: string; poses?: Poses | null; note?: string;
+}) {
+  const pose = ghost && poses ? poses[ghost] : undefined;
   return (
     <div className="relative flex-1 overflow-hidden" style={{ background: "#EDE5DC" }}>
       <HandSkeleton colored />
-      {ghost && (
-        <svg viewBox="0 0 920 720" className="absolute inset-0 w-full h-full pointer-events-none">
-          <text x="460" y="420" textAnchor="middle"
-            fill={c.ink} fontSize="260" fontFamily="'Nunito', sans-serif"
-            fontWeight="900" opacity="0.04">{ghost}</text>
-        </svg>
+      {pose && (
+        // The ghost of the target shape, the way the desktop app overlays it.
+        <div className="absolute pointer-events-none"
+          style={{ left: "50%", top: "50%", transform: "translate(-50%,-50%)", opacity: 0.14 }}>
+          <PoseArt pose={pose} size={380} />
+        </div>
       )}
+      <div className="absolute left-5 top-5 flex items-center gap-2">
+        <span className="px-2.5 py-1 rounded-full"
+          style={{ background: c.ink, color: "#fff", fontSize: 10, fontWeight: 800, letterSpacing: "0.08em" }}>
+          DEMO
+        </span>
+        <span style={{ fontSize: 11, fontWeight: 600, color: c.inkSoft }}>
+          {note ?? "Sample frame — the real app draws your webcam here"}
+        </span>
+      </div>
     </div>
   );
 }
@@ -103,6 +163,7 @@ const NAV: { id: Screen | "home"; label: string }[] = [
   { id: "teach",    label: "Teach"    },
   { id: "practice", label: "Practice" },
   { id: "spell",    label: "Spell"    },
+  { id: "about",    label: "About"    },
 ];
 
 function NavIcon({ id, col }: { id: string; col: string }) {
@@ -123,9 +184,16 @@ function NavIcon({ id, col }: { id: string; col: string }) {
       <circle cx="9" cy="9" r="2.5" fill={col} />
     </svg>
   );
-  return (
+  if (id === "spell") return (
     <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
       <path d="M3 5h12M3 9h7M3 13h9" stroke={col} strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  );
+  return (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="9" r="7.2" stroke={col} strokeWidth="1.8" fill="none" />
+      <circle cx="9" cy="5.4" r="1.05" fill={col} />
+      <path d="M9 8v5" stroke={col} strokeWidth="1.8" strokeLinecap="round" />
     </svg>
   );
 }
@@ -137,9 +205,12 @@ function LeftNav({ screen, onNav }: { screen: Screen | "home"; onNav: (s: Screen
       {/* logo mark */}
       <div className="w-9 h-9 rounded-2xl flex items-center justify-center mb-5"
         style={{ background: c.yellow }}>
-        <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
-          <path d="M9 1C5.5 1 3 4.5 3 8c0 1.8.6 3.4 1.7 4.5L9 17l4.3-4.5C14.4 11.4 15 9.8 15 8c0-3.5-2.5-7-6-7z" fill={c.ink}/>
-          <circle cx="9" cy="8" r="2" fill={c.yellow} />
+        {/* graduation cap, matching the desktop app's rail mark */}
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+          <path d="M10 3.4 18 7l-8 3.6L2 7l8-3.6z" fill={c.ink} />
+          <path d="M6 9.2v3.4c0 1.1 1.8 2 4 2s4-.9 4-2V9.2l-4 1.8-4-1.8z" fill={c.ink} />
+          <path d="M16.6 7.7v4.1" stroke={c.ink} strokeWidth="1.1" strokeLinecap="round" />
+          <circle cx="16.6" cy="12.6" r="1.25" fill={c.ink} />
         </svg>
       </div>
 
@@ -229,17 +300,40 @@ function Btn({ label, badge, onClick, variant = "default" }: {
   );
 }
 
-function PhotoCard({ letter }: { letter: string }) {
+function PhotoCard({ letter, poses }: { letter: string; poses: Poses | null }) {
+  const pose = poses?.[letter];
   return (
-    <div className="rounded-2xl overflow-hidden relative">
-      <img src={refImage(letter)} alt={`Hand shape for letter ${letter}`}
-        className="w-full object-cover" style={{ height: 148 }} />
-      <div className="absolute inset-0 pointer-events-none"
-        style={{ background: "linear-gradient(to top, rgba(17,17,17,0.6) 0%, transparent 55%)" }} />
-      <div className="absolute bottom-3 left-3 right-3 flex items-end justify-between">
-        <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255,245,235,0.92)" }}>How to sign · {letter}</span>
-        <span style={{ fontSize: 10, fontWeight: 600, color: "rgba(255,245,235,0.5)" }}>Reference</span>
+    <Card>
+      <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <Eyebrow>How to sign</Eyebrow>
+          <p style={{ fontSize: 12, color: c.inkMid, fontWeight: 500, lineHeight: 1.55 }}>
+            The exact hand shape <strong style={{ color: c.ink }}>{letter}</strong> is
+            scored against — the real reference pose, not an illustration.
+          </p>
+        </div>
+        <div className="rounded-2xl shrink-0" style={{ background: c.surface, padding: 6 }}>
+          {pose
+            ? <PoseArt pose={pose} size={116} />
+            : <div style={{ width: 116, height: 116 }} />}
+        </div>
       </div>
+    </Card>
+  );
+}
+
+/** Short "what you are looking at" note for a mode's side panel. */
+function Note({ title, children, bg = c.surface, col = c.inkMid }: {
+  title: string; children: React.ReactNode; bg?: string; col?: string;
+}) {
+  return (
+    <div className="rounded-2xl p-4" style={{ background: bg }}>
+      <p style={{ fontSize: 10, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", color: col, opacity: 0.7, marginBottom: 6 }}>
+        {title}
+      </p>
+      <p style={{ fontSize: 12, fontWeight: 500, color: col, lineHeight: 1.6 }}>
+        {children}
+      </p>
     </div>
   );
 }
@@ -297,6 +391,12 @@ function HomeScreen({ onMode }: { onMode: (s: Screen) => void }) {
         ))}
       </div>
 
+      <button onClick={() => onMode("about")}
+        className="relative z-10 px-5 py-2.5 rounded-2xl transition-all active:scale-[0.98] hover:opacity-85"
+        style={{ background: c.white, outline: `1.5px solid ${c.inkFaint}`, fontSize: 12, fontWeight: 700, color: c.inkMid }}>
+        What is this?  ·  How it works
+      </button>
+
       <p className="relative z-10" style={{ fontSize: 11, color: c.inkFaint, fontWeight: 500 }}>
         J and Z are motion signs and are not included in this version.
       </p>
@@ -305,14 +405,14 @@ function HomeScreen({ onMode }: { onMode: (s: Screen) => void }) {
 }
 
 // ── teach ─────────────────────────────────────────────────────────────────────
-function TeachScreen({ onHome }: { onHome: () => void }) {
+function TeachScreen({ onHome, poses }: { onHome: () => void; poses: Poses | null }) {
   const [idx, setIdx] = useState(0);
   const done = idx >= LETTERS.length;
   const letter = done ? "" : LETTERS[idx];
 
   return (
     <div className="flex-1 flex min-w-0 h-full">
-      <CameraArea ghost={letter} />
+      <CameraArea ghost={letter} poses={poses} />
       <Panel>
         {done ? (
           <>
@@ -336,7 +436,7 @@ function TeachScreen({ onHome }: { onHome: () => void }) {
               </div>
             </Card>
 
-            <PhotoCard letter={letter} />
+            <PhotoCard letter={letter} poses={poses} />
 
             <Card>
               <Bar value={62} color={c.mint} label="Match — 62%" />
@@ -369,6 +469,13 @@ function TeachScreen({ onHome }: { onHome: () => void }) {
               </div>
             </Card>
 
+            <Note title="What you are seeing">
+              The bar is how close your hand is to the reference shape, and the
+              CNN read is what the classifier thinks you are signing. Both run
+              at once — one grades, one decides. In this demo they hold sample
+              values.
+            </Note>
+
             <div className="space-y-2 mt-auto pt-1">
               <Btn label="Next letter" badge="N" onClick={() => setIdx(i => i + 1)} variant="primary" />
               <Btn label="Random letter" badge="R" onClick={() => setIdx(Math.floor(Math.random() * LETTERS.length))} />
@@ -386,7 +493,7 @@ function PracticeScreen({ onHome }: { onHome: () => void }) {
   const recent = ["A", "F", "B", "L", "K"];
   return (
     <div className="flex-1 flex min-w-0 h-full">
-      <CameraArea />
+      <CameraArea note="Sample frame — the real app reads your hand here" />
       <Panel>
         <MixedLabel normal="Practice" bold="free signing" />
 
@@ -427,6 +534,13 @@ function PracticeScreen({ onHome }: { onHome: () => void }) {
           </p>
         </Card>
 
+        <Note title="What you are seeing">
+          This screen shows the two signals side by side: what the trained
+          classifier reads, and which stored hand shape your pose is
+          geometrically nearest. They usually agree — when they disagree, the
+          disagreement is the interesting part.
+        </Note>
+
         <div className="mt-auto pt-1">
           <Btn label="Go home" badge="H" onClick={onHome} />
         </div>
@@ -436,7 +550,7 @@ function PracticeScreen({ onHome }: { onHome: () => void }) {
 }
 
 // ── spell ─────────────────────────────────────────────────────────────────────
-function SpellScreen({ onHome }: { onHome: () => void }) {
+function SpellScreen({ onHome, poses }: { onHome: () => void; poses: Poses | null }) {
   const word = SAMPLE_WORD.split("");
   const [committed, setCommitted] = useState(1);
   const [complete, setComplete] = useState(false);
@@ -472,7 +586,7 @@ function SpellScreen({ onHome }: { onHome: () => void }) {
       </div>
 
       <div className="flex flex-1 min-h-0">
-        <CameraArea ghost={complete ? undefined : word[current]} />
+        <CameraArea ghost={complete ? undefined : word[current]} poses={poses} />
         <Panel>
           {complete ? (
             <>
@@ -497,7 +611,7 @@ function SpellScreen({ onHome }: { onHome: () => void }) {
                 </div>
               </Card>
 
-              <PhotoCard letter={word[current]} />
+              <PhotoCard letter={word[current]} poses={poses} />
 
               <Card>
                 <Bar value={38} color={c.sky} label="Keep holding — 1.5s to commit" />
@@ -515,6 +629,12 @@ function SpellScreen({ onHome }: { onHome: () => void }) {
                 </p>
               </Card>
 
+              <Note title="What you are seeing" bg={c.surface}>
+                In the real app the bar fills only while you hold the correct
+                sign, and the letter commits when it reaches the end. Here the
+                buttons stand in for your hand.
+              </Note>
+
               <div className="space-y-2 mt-auto pt-1">
                 <Btn label="Commit letter" badge="N" onClick={advance} variant="primary" />
                 <Btn label="Skip this letter" badge="S" onClick={advance} />
@@ -528,17 +648,131 @@ function SpellScreen({ onHome }: { onHome: () => void }) {
   );
 }
 
+// ── about ─────────────────────────────────────────────────────────────────────
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 26 }}>
+      <p style={{ fontSize: 13, fontWeight: 800, color: c.terra, marginBottom: 8 }}>{title}</p>
+      <p style={{ fontSize: 13, fontWeight: 500, color: c.inkMid, lineHeight: 1.75 }}>{children}</p>
+    </div>
+  );
+}
+
+function AboutScreen({ onMode, poses }: {
+  onMode: (s: Screen) => void; poses: Poses | null;
+}) {
+  const letters = poses ? Object.keys(poses) : [];
+  return (
+    <div className="flex-1 min-w-0 h-full overflow-y-auto" style={{ background: c.bg }}>
+      <div className="mx-auto px-10 py-12" style={{ maxWidth: 940 }}>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+          <Chip label="Demo" bg={c.ink} col="#fff" />
+          <span style={{ fontSize: 12, fontWeight: 600, color: c.inkSoft }}>
+            An interactive walkthrough of a desktop app
+          </span>
+        </div>
+
+        <h1 style={{ fontSize: 40, fontWeight: 900, color: c.ink, lineHeight: 1.15, marginBottom: 14 }}>
+          A tutor for the ASL<br />fingerspelling alphabet
+        </h1>
+        <p style={{ fontSize: 15, fontWeight: 500, color: c.inkMid, lineHeight: 1.7, marginBottom: 36, maxWidth: 640 }}>
+          Sign a letter at your webcam and it tells you which fingers are off,
+          one letter at a time, until the shape is right.
+        </p>
+
+        <div className="grid gap-5" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <div>
+            <Section title="What this page is">
+              What you are clicking through is the interface, with sample
+              readings in place of live ones. There is no camera and no model
+              behind a static web page, so the numbers hold still. Everything
+              else — the screens, the flow, the reference hand shapes — is the
+              real thing.
+            </Section>
+
+            <Section title="Why it needs a camera">
+              The tutor works by watching the shape of your hand, so the real
+              app needs the webcam to see it. Frames are read one at a time on
+              your own machine and discarded immediately: nothing is recorded,
+              saved, or uploaded, and no network connection is involved.
+            </Section>
+          </div>
+
+          <div>
+            <Section title="How it grades a sign">
+              Two things look at your hand at once. A small convolutional
+              network, trained on about 99,000 hand-skeleton images, decides
+              whether the sign is right at all. Separately, your hand is
+              compared geometrically against a stored reference pose — that
+              comparison fills the match bar and colours each knuckle by how
+              far off it is. The classifier decides; the geometry explains.
+            </Section>
+
+            <Section title="What it leaves out">
+              J and Z are the two letters made with movement rather than a held
+              shape, so they are not included. Being honest about that is
+              cheaper than pretending a still-image model can read motion.
+            </Section>
+          </div>
+        </div>
+
+        <div className="rounded-2xl p-6" style={{ background: c.white, marginBottom: 28 }}>
+          <Eyebrow>The 24 reference shapes</Eyebrow>
+          <p style={{ fontSize: 12, fontWeight: 500, color: c.inkSoft, lineHeight: 1.6, marginBottom: 16 }}>
+            Not drawings. Each one is averaged from real photographs of that
+            letter being signed, and is exactly what your hand is scored
+            against.
+          </p>
+          <div className="flex flex-wrap" style={{ gap: 10 }}>
+            {letters.map((l) => (
+              <div key={l} className="rounded-xl" style={{ background: c.surface, padding: "6px 6px 4px", textAlign: "center" }}>
+                <PoseArt pose={poses![l]} size={66} stroke={c.inkMid} />
+                <p style={{ fontSize: 11, fontWeight: 800, color: c.ink, lineHeight: 1.2 }}>{l}</p>
+              </div>
+            ))}
+            {letters.length === 0 && (
+              <p style={{ fontSize: 12, color: c.inkFaint }}>Loading reference poses…</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-2xl p-6" style={{ background: c.yellow, marginBottom: 32 }}>
+          <p style={{ fontSize: 13, fontWeight: 800, color: c.yellowDk, marginBottom: 6 }}>
+            Want the working version?
+          </p>
+          <p style={{ fontSize: 13, fontWeight: 500, color: c.yellowDk, lineHeight: 1.65 }}>
+            The tutor itself runs locally in Python — OpenCV for the camera,
+            MediaPipe for the hand landmarks, Keras for the classifier. The
+            repository has the setup steps, the training scripts, and the
+            reasoning behind the scoring design.
+          </p>
+        </div>
+
+        <p style={{ fontSize: 12, fontWeight: 700, color: c.inkSoft, marginBottom: 12 }}>Try the screens</p>
+        <div className="flex gap-3" style={{ maxWidth: 560 }}>
+          <Btn label="Teach" badge="1" onClick={() => onMode("teach")} variant="primary" />
+          <Btn label="Practice" badge="2" onClick={() => onMode("practice")} />
+          <Btn label="Spell" badge="3" onClick={() => onMode("spell")} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── root ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState<Screen | "home">("home");
+  const poses = usePoses();
   return (
     <div className="w-full h-full flex overflow-hidden" style={{ background: c.bg }}>
       <LeftNav screen={screen} onNav={setScreen} />
       <div className="flex flex-1 min-w-0 h-full">
         {screen === "home"     && <HomeScreen onMode={setScreen} />}
-        {screen === "teach"    && <TeachScreen onHome={() => setScreen("home")} />}
+        {screen === "teach"    && <TeachScreen onHome={() => setScreen("home")} poses={poses} />}
         {screen === "practice" && <PracticeScreen onHome={() => setScreen("home")} />}
-        {screen === "spell"    && <SpellScreen onHome={() => setScreen("home")} />}
+        {screen === "spell"    && <SpellScreen onHome={() => setScreen("home")} poses={poses} />}
+        {screen === "about"    && <AboutScreen onMode={setScreen} poses={poses} />}
       </div>
     </div>
   );

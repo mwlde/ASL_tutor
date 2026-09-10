@@ -312,6 +312,33 @@ class Canvas:
         return int(round(step * len(lines)))
 
 
+def mortarboard(ui, box, color):
+    """A graduation cap, drawn to fill `box`: board, cap, and tassel."""
+    x, y, w, h = box
+    cx, cy = x + w / 2, y + h / 2
+    fill = rgba(color, 1.0)
+
+    board = w * 0.40          # half-width of the flat top
+    ui.draw.polygon([(cx, cy - h * 0.24), (cx + board, cy - h * 0.06),
+                     (cx, cy + h * 0.12), (cx - board, cy - h * 0.06)],
+                    fill=fill)
+
+    # The cap below it, drawn as the band that shows under the board.
+    cap = w * 0.20
+    ui.draw.polygon([(cx - cap, cy - h * 0.01), (cx + cap, cy - h * 0.01),
+                     (cx + cap, cy + h * 0.16), (cx, cy + h * 0.25),
+                     (cx - cap, cy + h * 0.16)], fill=fill)
+
+    # Tassel: down the right edge of the board, ending in a knot.
+    tx = cx + board * 0.80
+    ui.draw.line([(tx, cy - h * 0.04), (tx, cy + h * 0.18)], fill=fill,
+                 width=max(1, int(w * 0.05)))
+    knot = max(1.5, w * 0.07)
+    ui.draw.ellipse((tx - knot, cy + h * 0.16 - knot,
+                     tx + knot, cy + h * 0.16 + knot), fill=fill)
+
+
+
 def _bezier(p0, p1, p2, p3, steps):
     """Sample a cubic bezier as a list of (x, y) points."""
     out = []
