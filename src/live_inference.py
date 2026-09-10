@@ -1,4 +1,10 @@
-"""Simple webcam-based ASL inference scaffold."""
+"""Webcam loop for the ASL fingerspelling tutor.
+
+This module owns the camera, the models, and nothing else about the UI: each
+frame it detects the hand, classifies it, then hands the result to the current
+tutor `Mode`, which decides what to draw and how to react to key presses. See
+`src/tutor/modes.py` for the modes themselves.
+"""
 
 from collections import Counter, deque
 import json
@@ -19,6 +25,9 @@ from .config import (
 from .hand_tracking import HandTracker
 from .preprocessing import preprocess_skeleton
 from .skeleton import render_skeleton
+from .tutor import theme
+from .tutor.modes import HomeMode, camera_prompt
+from .tutor.reference import ReferenceLibrary
 
 
 def load_classifier(model_path=MODEL_PATH):
@@ -86,153 +95,177 @@ def classify_hand(model, landmarks, prediction_history, class_names):
     return smoothed_label, smoothed_confidence, skeleton
 
 
-SIDEBAR_WIDTH = 360
+def _warn(frame, lines, y=40):
+    """Print red warning lines in the top-left corner."""
+    for i, line in enumerate(lines):
+        cv2.putText(frame, line, (20, y + i * 30),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
 
-def draw_sidebar(frame, label, confidence, skeleton_rgb, min_confidence=0.5):
-    """Draw a full-height right sidebar with the letter, confidence, and input.
+def _save_session(mode):
+    """Persist a mode's attempt log, if it keeps one."""
+    session = getattr(mode, "session", None)
+    if session is not None:
+        session.save()
 
-    Consolidates the readout into one clear column: a big letter up top, a
-    confidence bar, and the rendered skeleton ("model input") below.
+
+def open_camera(index=0, width=FRAME_WIDTH, height=FRAME_HEIGHT):
+    """Open the webcam, or return None if it is unavailable.
+
+    A denied camera permission looks the same as no camera at all, so this
+    never raises: the app opens anyway and shows the "allow camera access"
+    notice until one turns up.
     """
-    h, w = frame.shape[:2]
-    x0 = w - SIDEBAR_WIDTH
+    cap = cv2.VideoCapture(index)
+    if not cap.isOpened():
+        cap.release()
+        return None
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    return cap
 
-    # Solid-ish dark panel.
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (x0, 0), (w, h), (18, 18, 18), -1)
-    cv2.addWeighted(overlay, 0.85, frame, 0.15, 0, frame)
-    cv2.line(frame, (x0, 0), (x0, h), (0, 200, 0), 2)
 
-    cx = x0 + SIDEBAR_WIDTH // 2
-    cv2.putText(frame, "DETECTED LETTER", (x0 + 24, 46),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (170, 170, 170), 2)
+def _inside(box, x, y):
+    """Whether (x, y) falls inside an (x, y, w, h) box."""
+    bx, by, bw, bh = box
+    return bx <= x < bx + bw and by <= y < by + bh
 
-    # Big centered glyph, vertically centered in a fixed band [70, 250].
-    confident = label is not None and confidence >= min_confidence
-    glyph = label if confident else ("?" if label is not None else "-")
-    color = (0, 255, 0) if confident else (0, 165, 255)
-    scale, thick = 6.5, 14
-    (tw, th), _ = cv2.getTextSize(glyph, cv2.FONT_HERSHEY_SIMPLEX, scale, thick)
-    baseline_y = 70 + (180 + th) // 2
-    cv2.putText(frame, glyph, (cx - tw // 2, baseline_y),
-                cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick)
 
-    # Confidence bar.
-    bar_x, bar_y, bar_w, bar_h = x0 + 30, 290, SIDEBAR_WIDTH - 60, 26
-    cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (70, 70, 70), 1)
-    if label is not None:
-        fill = int(bar_w * max(0.0, min(1.0, confidence)))
-        cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill, bar_y + bar_h), color, -1)
-    conf_text = f"{confidence:.0%} confidence" if label is not None else "no hand detected"
-    cv2.putText(frame, conf_text, (bar_x, bar_y + bar_h + 28),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (200, 200, 200), 2)
-
-    # Skeleton "model input" preview near the bottom of the sidebar.
-    size = SIDEBAR_WIDTH - 80
-    px = x0 + (SIDEBAR_WIDTH - size) // 2
-    py = h - size - 40
-    cv2.putText(frame, "model input", (px, py - 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (150, 150, 150), 1)
-    if skeleton_rgb is not None:
-        thumb = cv2.cvtColor(cv2.resize(skeleton_rgb, (size, size)), cv2.COLOR_RGB2BGR)
-        frame[py:py + size, px:px + size] = thumb
-    cv2.rectangle(frame, (px, py), (px + size, py + size), (70, 70, 70), 1)
+def _blank_frame(width=FRAME_WIDTH, height=FRAME_HEIGHT):
+    """A plain themed frame to draw on while there is no camera image."""
+    frame = np.empty((height, width, 3), dtype=np.uint8)
+    frame[:] = theme.bgr(theme.BG)
+    return frame
 
 
 def main():
-    """Open the webcam and run the live inference scaffold."""
+    """Open the webcam and run the tutor loop."""
     model = load_classifier()
     class_names = load_class_names()
     hand_tracker = HandTracker()
+    reference_library = ReferenceLibrary.load()
     prediction_history = deque(maxlen=PREDICTION_HISTORY)
 
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        raise RuntimeError("Unable to open webcam")
+    mode = HomeMode()
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
+    window = "ASL Fingerspelling Tutor"
+    cv2.namedWindow(window)
 
+    # The UI is clickable as well as keyboard-driven. Clicks are queued by the
+    # callback and drained in the loop, so handling runs on the main thread
+    # against the regions the current frame actually drew.
+    clicks = []
+
+    def on_mouse(event, x, y, _flags, _param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            clicks.append((x, y))
+
+    cv2.setMouseCallback(window, on_mouse)
+
+    cap = open_camera()
     start_time = time.time()
+    quitting = False
 
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
+    while not quitting:
+        frame = None
+        if cap is not None:
+            success, captured = cap.read()
+            if success:
+                frame = cv2.flip(captured, 1)
+            else:
+                # The camera went away mid-session (unplugged, or permission
+                # revoked). Drop it and fall back to the notice.
+                cap.release()
+                cap = None
 
-        frame = cv2.flip(frame, 1)
-        # detect_for_video requires strictly increasing timestamps
-        timestamp_ms = int((time.time() - start_time) * 1000)
+        camera_ready = frame is not None
+        if frame is None:
+            frame = _blank_frame()
 
-        # Run the Tasks HandLandmarker on this frame
-        result = hand_tracker.detect(frame, timestamp_ms)
-        hand_tracker.draw(frame, result)
+        label, confidence = None, 0.0
+        if camera_ready:
+            # detect_for_video requires strictly increasing timestamps
+            timestamp_ms = int((time.time() - start_time) * 1000)
+            result = hand_tracker.detect(frame, timestamp_ms)
+            hand_tracker.draw(frame, result)
+            first_hand = hand_tracker.get_first_hand(result)
 
-        # Compute a padded bounding box around the first detected hand
-        first_hand = hand_tracker.get_first_hand(result)
-        bbox = hand_tracker.extract_bbox(frame, first_hand) if first_hand else None
-        if bbox is not None:
-            x_min, y_min, x_max, y_max = bbox
-            cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-
-        if model is None:
-            cv2.putText(
-                frame,
-                "Warning: model file missing",
-                (20, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 0, 255),
-                2,
-            )
-            cv2.putText(
-                frame,
-                f"Expected: {MODEL_PATH}",
-                (20, 70),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2,
-            )
-        elif first_hand is not None and bbox is not None:
-            # Render the detected hand as a skeleton and classify that
-            label, confidence, skeleton = classify_hand(
-                model, first_hand, prediction_history, class_names
-            )
-            draw_sidebar(frame, label, confidence if confidence else 0.0, skeleton)
-        elif model is not None:
-            # No hand detected this frame — clear the readout.
-            prediction_history.clear()
-            draw_sidebar(frame, None, 0.0, None)
-
-        if not hand_tracker.available:
-            cv2.putText(
-                frame,
-                "Hand tracking unavailable",
-                (20, 100),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2,
-            )
-            if hand_tracker.error_message:
-                cv2.putText(
-                    frame,
-                    hand_tracker.error_message[:70],
-                    (20, 130),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    1,
+            if first_hand is None:
+                # No hand this frame - drop the smoothing history so the
+                # readout doesn't linger on a letter the user has stopped
+                # signing.
+                prediction_history.clear()
+            elif model is not None:
+                label, confidence, _skeleton = classify_hand(
+                    model, first_hand, prediction_history, class_names
                 )
+                confidence = confidence or 0.0
+        else:
+            first_hand = None
+            prediction_history.clear()
 
-        cv2.imshow("ASL Live Inference", frame)
+        # The current mode owns all state and all UI from here.
+        mode.camera_ready = camera_ready
+        mode.update(label, confidence, first_hand, reference_library)
+        mode.render(frame)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
+        notice = None
+        if not camera_ready:
+            notice = camera_prompt(frame, hand_tracker.error_message)
+        if model is None:
+            _warn(frame, ["Warning: model file missing",
+                          f"Expected: {MODEL_PATH}"])
+        if reference_library is None:
+            _warn(frame, ["Reference poses missing - no graded feedback",
+                          "Run: python -m scripts.build_reference_poses"],
+                  y=110)
+        if camera_ready and not hand_tracker.available:
+            lines = ["Hand tracking unavailable"]
+            if hand_tracker.error_message:
+                lines.append(hand_tracker.error_message[:70])
+            _warn(frame, lines, y=180)
+
+        cv2.imshow(window, frame)
+
+        key = cv2.waitKey(1) & 0xFF
+        if key in (ord("q"), ord("Q")):
+            break
+        if cap is None and key in (ord("r"), ord("R")):
+            cap = open_camera()
+            key = 255                      # consumed by the retry
+        if key != 255:
+            next_mode = mode.handle_key(key)
+            if next_mode is not None:
+                _save_session(mode)
+                mode = next_mode
+
+        while clicks:
+            x, y = clicks.pop(0)
+            if notice is not None:
+                # The camera notice covers the screen, so only its own buttons
+                # are live; everything behind it is hidden and must stay inert.
+                if _inside(notice["quit"], x, y):
+                    clicks.clear()
+                    quitting = True
+                    break
+                if _inside(notice["retry"], x, y):
+                    cap = open_camera()
+                clicks.clear()
+                break
+            next_mode = mode.handle_click(x, y)
+            if next_mode is not None:
+                _save_session(mode)
+                mode = next_mode
+                clicks.clear()             # the new mode drew none of these
+
+        # A closed window should quit rather than leave the loop spinning.
+        if cv2.getWindowProperty(window, cv2.WND_PROP_VISIBLE) < 1:
             break
 
-    cap.release()
+    _save_session(mode)
+    hand_tracker.close()
+    if cap is not None:
+        cap.release()
     cv2.destroyAllWindows()
 
 

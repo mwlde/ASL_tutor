@@ -7,6 +7,9 @@ tensorflow
 opencv-python
 mediapipe
 
+# Tutor UI rendering (Nunito text + rounded cards over the webcam frame)
+pillow
+
 # Dataset download (ASL Alphabet Wireframes)
 kagglehub
 

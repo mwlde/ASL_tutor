@@ -10,6 +10,7 @@ env/
 ENV/
 .venv/
 .venv311/
+.venv311
 
 #jupyter Notebook checkpoints
 .ipynb_checkpoints/
@@ -25,9 +26,13 @@ data/test/
 
 #generated training cache (rebuild with scripts/prep_wireframes.py)
 data/wireframes_processed/
+data/wireframes_processed
 
 #downloaded MediaPipe hand landmarker model
 models/*.task
+
+#per-day tutor session logs (local activity, not project data)
+results/sessions/
 
 #model files (too big for git)
 #trained models

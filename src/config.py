@@ -46,3 +46,23 @@ PREDICTION_HISTORY = 5
 HAND_LANDMARKER_MODEL_PATH = "models/hand_landmarker.task"
 # number of hands to detect
 NUM_HANDS = 1
+
+# --- Tutor UI and scoring thresholds (src/tutor/modes.py) ---
+# Layout of the three columns in the wireframe design (design/src/App.tsx):
+# a dark icon rail, the live camera, and the card panel. At the 1280x720 frame
+# this leaves the camera 856 px wide.
+RAIL_WIDTH = 68
+PANEL_WIDTH = 356
+# Minimum CNN confidence for a sign to count as correct. The CNN is the
+# pass/fail gate; the geometric score never decides correctness on its own.
+CNN_THRESHOLD = 0.70
+# Minimum graded geometric score to count as "close enough" alongside the gate.
+GEO_THRESHOLD = 0.65
+# How long a sign must be held to commit it in spell-a-word mode.
+DWELL_SECONDS = 1.5
+# Consecutive passing frames before Teach mode auto-advances.
+TEACH_HOLD_FRAMES = 8
+# Word list for spell-a-word mode.
+WORDS_PATH = "data/words.txt"
+# Per-day attempt logs (gitignored).
+SESSIONS_DIR = "results/sessions"

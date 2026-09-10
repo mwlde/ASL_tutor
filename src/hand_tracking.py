@@ -103,6 +103,22 @@ class HandTracker:
 
         return landmarks[0]
 
+    # Live-hand styling, matching the tutor's wireframe design: near-black ink
+    # underneath and warm off-white on top, so the skeleton stays legible over
+    # a bright wall or a dark room without borrowing an accent color that the
+    # panel uses to mean something.
+    _INK = (17, 17, 17)
+    _LIGHT = (239, 243, 247)
+
+    _CONNECTIONS = (
+        (0, 1), (1, 2), (2, 3), (3, 4),
+        (0, 5), (5, 6), (6, 7), (7, 8),
+        (5, 9), (9, 10), (10, 11), (11, 12),
+        (9, 13), (13, 14), (14, 15), (15, 16),
+        (13, 17), (17, 18), (18, 19), (19, 20),
+        (0, 17),
+    )
+
     def draw(self, frame, result):
         """Draw landmarks and a lightweight skeleton on the frame."""
         landmarks = getattr(result, "hand_landmarks", None)
@@ -111,24 +127,16 @@ class HandTracker:
 
         h, w = frame.shape[:2]
         for hand in landmarks:
-            pts = []
-            for lm in hand:
-                x = int(lm.x * w)
-                y = int(lm.y * h)
-                pts.append((x, y))
-                cv2.circle(frame, (x, y), 3, (0, 255, 0), -1)
+            pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand]
 
-            connections = [
-                (0, 1), (1, 2), (2, 3), (3, 4),
-                (0, 5), (5, 6), (6, 7), (7, 8),
-                (5, 9), (9, 10), (10, 11), (11, 12),
-                (9, 13), (13, 14), (14, 15), (15, 16),
-                (13, 17), (17, 18), (18, 19), (19, 20),
-                (0, 17)
-            ]
-            for a, b in connections:
-                if a < len(pts) and b < len(pts):
-                    cv2.line(frame, pts[a], pts[b], (255, 0, 0), 2)
+            for color, thickness in ((self._INK, 6), (self._LIGHT, 2)):
+                for a, b in self._CONNECTIONS:
+                    if a < len(pts) and b < len(pts):
+                        cv2.line(frame, pts[a], pts[b], color, thickness,
+                                 cv2.LINE_AA)
+            for p in pts:
+                cv2.circle(frame, p, 5, self._INK, -1, cv2.LINE_AA)
+                cv2.circle(frame, p, 3, self._LIGHT, -1, cv2.LINE_AA)
 
     def extract_bbox(self, frame, hand_landmarks):
         """Compute a padded bbox from a landmarks list (normalized coordinates)."""

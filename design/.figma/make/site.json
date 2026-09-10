@@ -1,0 +1,10 @@
+{
+  "description": "Enables users to interact with American Sign Language through an accessible desktop app featuring intuitive buttons for seamless learning and communication.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
